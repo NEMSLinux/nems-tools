@@ -1,0 +1,141 @@
+<?php
+
+// this file is included from warninglight. Not run separately.
+
+$webhook = trim(shell_exec('/usr/local/bin/nems-info webhook'));
+
+// currentissueshead set means 1) this was called by warninglight and 2) something has changed
+if (isset($currentissueshead) && strlen($webhook) > 0) {
+
+$alias = trim(shell_exec('/usr/local/bin/nems-info alias'));
+$nemsver = trim(shell_exec('/usr/local/bin/nems-info nemsver'));
+
+$light_cdn = 'https://cdn.zecheriah.com/nems/img/lights/';
+$stateup = strtoupper($state);
+switch ($stateup) {
+  case 'OK':
+    $color='green';
+    break;
+
+  case 'WARNING':
+  case 'UNKNOWN':
+    $color='yellow';
+    break;
+
+  case 'CRITICAL':
+    $color='red';
+    break;
+
+  default:
+    $color='yellow';
+}
+
+if (!isset($fieldsarray)) {
+  $fieldsarray[] = array(
+    'name' => 'No Info',
+    'value' => 'Something is up.',
+    'inline' => false
+  );
+}
+
+if (!class_exists('RemoteResult')) {
+  class RemoteResult {
+    public $name;
+    public $value;
+    public $inline;
+
+    public function __construct($name, $value, $inline) {
+        $this->name = $name;
+        $this->value = $value;
+        $this->inline = $inline;
+    }
+
+    public function toJson() {
+        return [
+            'name' => $this->name,
+            'value' => $this->value,
+            'inline' => $this->inline,
+        ];
+    }
+  }
+}
+
+$output = [];
+
+foreach ($fieldsarray as $input) {
+    array_push($output, new RemoteResult($input['name'], $input['value'], $input['inline']));
+}
+
+// Create the webhook object
+$hookObject = new stdClass();
+
+if (strstr($webhook,'office.com')) { // MS Office 365 / Teams: https://docs.microsoft.com/en-us/outlook/actionable-messages/send-via-connectors
+  $nemsstate = trim('NEMS ' . $currentissueshead);
+  $hookObject->{@schema} = 'https://adaptivecards.io/schemas/adaptive-card.json';
+  $hookObject->type = 'AdaptiveCard';
+  $hookObject->version = '1.0';
+  $hookObject->username = 'NEMS ' . strtoupper($state);
+  $hookObject->image = $light_cdn . $color . '.png';
+
+  $formattedIssues = '';
+  foreach(preg_split("/((\r?\n)|(\r\n?))/", $currentissues) as $line){
+    $formattedIssues .= trim($line) . "\r\n";
+  } 
+
+  // For now, have to do plain text since Adaptive Cards don't work in MS Teams [yet] - see https://stackoverflow.com/questions/50753072/microsoft-teams-webhook-generating-400-for-adaptive-card#comment93907448_50753413
+  $hookObject->text = "**$nemsstate**\n\n" . $formattedIssues . "\n\n**Reporting Server:** $alias\n\n**Timestamp:** " . date('c') . "\n\nPowered by NEMS Linux $nemsver";
+
+} elseif (strstr($webhook,'slack.com')) { // Slack
+
+  $nemsstate = trim('NEMS ' . $currentissueshead);
+  $hookObject->username = 'NEMS ' . strtoupper($state);
+  $hookObject->icon_url = $light_cdn . $color . '.png';
+  $hookObject->text = "*$nemsstate*\n\n" . str_replace(PHP_EOL,"\n\n",$currentissues) . "\n\n*Reporting Server:* $alias\n\n*Timestamp:* " . date('c') . "\n\nPowered by <https://nemslinux.com/|NEMS Linux $nemsver>";
+
+} elseif ( strstr($webhook,'discord.com') || strstr($webhook,'discordapp.com') )  { // Discord
+  $hookObject->content = strtoupper($state);
+  $hookObject->username = 'NEMS ' . strtoupper($state);
+  $hookObject->avatar_url = $light_cdn . $color . '.png';
+  $hookObject->tts = false;
+
+  $hookObject->embeds = array();
+  $hookObject->embeds[0] = array();
+  $hookObject->embeds[0]['title'] = $currentissueshead;
+  $hookObject->embeds[0]['type'] = 'rich';
+  $hookObject->embeds[0]['description'] = '';
+  $hookObject->embeds[0]['timestamp'] = date('c');
+  $hookObject->embeds[0]['color'] = hexdec('FFFFFF');
+
+  $hookObject->embeds[0]['author'] = new stdClass();
+  $hookObject->embeds[0]['author']->name = 'Reporting Server: ' . $alias;
+
+  $hookObject->embeds[0]['footer'] = new stdClass();
+  $hookObject->embeds[0]['footer']->text = 'Powered by NEMS Linux ' . $nemsver;
+
+  $hookObject->embeds[0]['fields'] = $output;
+} else {
+  echo 'Unsupported Webhook.';
+  exit();
+}
+
+
+
+$ch = curl_init();
+
+$hookObjectJSON = json_encode($hookObject, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+
+curl_setopt_array( $ch, [
+    CURLOPT_URL => $webhook,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => $hookObjectJSON,
+    CURLOPT_HTTPHEADER => [
+        "Length: " . strlen( $hookObjectJSON ) . ',',
+        "Content-Type: application/json"
+    ]
+]);
+
+$response = curl_exec( $ch );
+curl_close( $ch );
+
+}
+?>

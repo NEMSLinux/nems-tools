@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# Detect a NEMS Server on this subnet and add config file for NEMS Tools
+
+# Depends: nmap jq
+if [ $(/usr/bin/dpkg-query -W -f='${Status}' nmap 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+  echo "Installing dependency: nmap"
+  /usr/bin/apt-get -y install nmap
+fi
+if [ $(/usr/bin/dpkg-query -W -f='${Status}' jq 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+  echo "Installing dependency: jq"
+  /usr/bin/apt-get -y install jq
+fi
+
+echo "NEMS Tools NEMS Server Detector"
+
+if [[ ! -e /boot/nems-tools.conf ]] && [[ ! -e /tmp/cleaning ]]; then
+  foundnems=0
+  subnet=$(ip -o -f inet addr show | awk '/scope global/ {print $4}')
+  echo "Loading servers on $subnet."
+  ips=$(/usr/bin/nmap -n -sn $subnet -oG - | awk '/Up$/{print $2}')
+  found=$(echo "$ips" | wc -l)
+  echo "Found $found active IP addresses on subnet."
+  echo "Checking if any are a NEMS Server."
+  for ip in $ips; do
+    response=$(/usr/bin/curl -m 3 -s "http://$ip:9595")
+    detect=$(echo $response | /usr/bin/jq -rMc '.nems' 2>&1)
+    shopt -s nocasematch
+    case "$detect" in
+     "true" ) echo "nemsserver=$ip" >> /boot/nems-tools.conf; echo "Detected NEMS Server at $ip"; foundnems=$((foundnems+1));
+    esac
+  done
+  if (( $foundnems > 0 )); then
+    echo "Found $foundnems."
+  else
+    echo "I could not find a NEMS Server!"
+  fi
+else
+
+  echo "Configuration already exists:"
+  cat /boot/nems-tools.conf
+
+fi

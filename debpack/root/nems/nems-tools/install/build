@@ -1,0 +1,109 @@
+#!/bin/bash
+
+if [[ -e /usr/local/bin/nems-info ]]; then
+  platform=$(/usr/local/bin/nems-info platform)
+else
+  platform=0 # Assume this is a raw Pi distro
+fi
+
+apt-get update
+apt-get install -y php apache2 libapache2-mod-php php-curl
+apt-get install -y nmap jq
+
+# enable I2C
+  apt-get install -y python-smbus
+  apt-get install -y i2c-tools
+  if ! grep -q "i2c-dev" /etc/modules; then
+    echo 'i2c-dev' >> /etc/modules
+  fi
+  if grep -q "#dtparam=i2c_arm=on" /boot/config.txt; then
+    /bin/sed -i -- 's,#dtparam=i2c_arm=on,dtparam=i2c_arm=on,g' /boot/config.txt
+  fi
+  # In case it wasn't commented in the file previously, so still does not exist
+  if ! grep -q "dtparam=i2c_arm=on" /boot/config.txt; then
+    echo 'dtparam=i2c_arm=on' >> /boot/config.txt
+  fi
+
+tmpdir=`mktemp -d -p /usr/local/src/`
+
+# Activate /nems-tools Apache conf
+ln -s /root/nems/nems-tools/install/apache2.conf /etc/apache2/conf-available/nems-tools.conf
+a2enconf nems-tools
+
+git config --global user.email "nems@category5.tv"
+git config --global user.name "NEMS Tools"
+
+ # Make a symlink to the PHP interpreter if it doesn't exist in /usr/local/bin
+ if [[ ! -e /usr/local/bin/php ]]; then
+  if [[ -e /usr/bin/php ]]; then
+   ln -s /usr/bin/php /usr/local/bin/php
+  fi
+ fi
+
+# Setup GPIO connections on Raspberry Pi
+if (( $platform >= 0 )) && (( $platform <= 9 )); then
+  apt-get install -y wiringpi
+fi
+
+# Install Cockpit
+  wget https://raw.githubusercontent.com/Cat5TV/nems-admin/master/build/170-cockpit -O $tmpdir/170-cockpit
+  chmod +x $tmpdir/170-cockpit
+  $tmpdir/170-cockpit
+  wget https://raw.githubusercontent.com/Cat5TV/nems-admin/master/build/171-cockpit -O $tmpdir/171-cockpit
+  chmod +x $tmpdir/171-cockpit
+  $tmpdir/171-cockpit
+
+# Add new cron entries
+
+  # Dump current crontab to tmp file
+  crontab -l > $tmpdir/cron.tmp
+
+  # Install the NEMS Tools GPIO Extender daemon.
+  if ! grep -q "NEMS0016" $tmpdir/cron.tmp; then
+    printf "\n# NEMS Tools GPIO Extender Client NEMS0016\n@reboot /root/nems/nems-tools/gpio-extender/gpioe-client > /dev/null 2>&1\n" >> $tmpdir/cron.tmp
+    cronupdate=1
+    # Run it
+    /root/nems/nems-tools/gpio-extender/gpioe-client > /dev/null 2>&1 &
+  fi
+
+  # Import revised crontab
+  if [[ "$cronupdate" == "1" ]]
+  then
+    crontab $tmpdir/cron.tmp
+  fi
+
+  # Remove tmp stuff
+  rm -rf $tmpdir
+
+# /Add new cron entries
+
+  if [[ -e /var/www/html ]]; then
+    rm -rf /var/www/html
+  fi
+  mkdir -p /var/www/html
+  cp -R /root/nems/nems-tools/www/* /var/www/html/
+
+# Overwrite the rc.local with default
+  echo '#!/bin/sh -e
+# Print the IP address
+_IP=$(hostname -I) || true
+if [ "$_IP" ]; then
+  printf "My IP address is %s\n" "$_IP"
+fi
+
+exit 0' > /etc/rc.local
+
+# Change hostname
+
+hn=$(/bin/hostname)
+if [[ $hn != "nems-gpioe" ]]; then
+  /bin/sed -i -- 's/'"$hn"'/nems-gpioe/g' /etc/hosts
+  /bin/sed -i -- 's/'"$hn"'/nems-gpioe/g' /etc/hostname
+  hostnamectl set-hostname nems-gpioe
+fi
+
+# Reload apache2
+systemctl reload apache2
+
+# Remove SSH from the server
+systemctl disable ssh

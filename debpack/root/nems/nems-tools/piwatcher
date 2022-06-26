@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Get your piWatcher hat at https://cat5.tv/piwatcher
+
+# piWatcher works by listening for its program to be called.
+# If the hat doesn't receive a heartbeat within 2 minutes,
+# power is cut to the Pi.
+# This script ensures a heartbeat is sent every 45 seconds, and
+# the Pi is powered back on after 15 seconds of power off.
+# This way, if the Pi locks up, it will be automatically restarted.
+
+# For those interested, here's how I compile and install piWatcher:
+# https://github.com/Cat5TV/nems-admin/blob/master/build/160-rpi-piwatcher
+
+platform=$(/usr/local/bin/nems-info platform)
+# If you're not using NEMS Linux but still want to use my script, comment the command above and uncomment this:
+#platform=1
+
+# Check if a PID exists. If yes, check if it is running and abort if yes.
+if [[ -e /var/run/nems-piwatcher.pid ]]; then
+  running=$(cat /var/run/nems-piwatcher.pid)
+  if ps -p $running > /dev/null
+    then
+      echo "Already running"
+      exit
+    fi
+fi
+
+# Store the PID (so you can more easily kill the process)
+echo $$ > /var/run/nems-piwatcher.pid
+
+if (( $platform < '10' )); then
+
+  # Just in case user is not on NEMS, create a log folder
+  if [[ ! -d /var/log/nems ]]; then
+    mkdir /var/log/nems
+  fi
+
+  # Check if a piWatcher is installed
+  piwatcher=$(/usr/local/bin/piwatcher status 2>&1)
+  if [[ $piwatcher == *"ERR"* ]]; then
+    echo 0 > /var/log/nems/piwatcher
+    echo "No piWatcher board detected. Get yours at https://cat5.tv/piwatcher"
+    exit
+  fi
+
+  echo 1 > /var/log/nems/piwatcher
+
+  # Tell the piWatcher to power off the NEMS Server if it hasn't received a heartbeat for 2 minutes
+  /usr/local/bin/piwatcher watch 120
+
+  # Set piWatcher to re-power the NEMS Server after 15 seconds of power off
+  /usr/local/bin/piwatcher wake 15
+
+  # Prevent piWatcher from shutting down the NEMS server
+  while true
+  do
+    # Send heartbeat to piWatcher every 45 seconds, resetting the 2 minute countdown
+    /usr/local/bin/piwatcher status
+    sleep 45
+  done
+
+fi
+
+rm /var/run/nems-piwatcher.pid

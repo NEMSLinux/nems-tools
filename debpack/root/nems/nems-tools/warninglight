@@ -1,0 +1,365 @@
+#!/usr/local/bin/php
+<?php
+$v=0;
+$iteration=0;
+$omzlopresent=3;
+$pid=getmypid();
+$user=trim(shell_exec('whoami'));
+if ($user != 'root') die('Access denied: Must be root.' . PHP_EOL);
+if (file_exists('/usr/local/bin/nems-info')) {
+  $platform = shell_exec('/usr/local/bin/nems-info platform');
+} else {
+  $platform = 0;
+}
+
+$isrunning = 0;
+if (file_exists('/var/run/warninglight.pid')) {
+  $pidfromfile = file_get_contents('/var/run/warninglight.pid');
+  if (file_exists( "/proc/$pidfromfile" )) {
+    $isrunning = 1;
+  }
+}
+
+if ($isrunning == 1 && ($pid != $pidfromfile)) {
+  die('Already running.' . PHP_EOL . 'Run: tail -f /var/log/nems/nems-tools/warninglight' . PHP_EOL);
+}
+
+file_put_contents('/var/run/warninglight.pid',$pid);
+
+$GPIO = new stdClass();
+
+omzlo('green3 orange3 red3');
+sleep(3);
+//omzlo('buzzer3');
+//sleep(1);
+omzlo('green2 orange1 red1');
+
+// Sleep to allow the GPIO Extender to initialize
+  sleep(30);
+
+// Let's go!
+
+  if (file_exists('/boot/nems-tools.conf')) {
+    $conf = file('/boot/nems-tools.conf');
+  } else {
+    $conf = file('/root/nems/nems-tools/nems-tools.conf'); // Default... localhost
+  }
+
+  if (is_array($conf) && (count($conf) > 0)) {
+    foreach ($conf as $line) {
+      $tmp = explode('=',$line);
+      if (is_array($tmp) && (count($tmp) == 2)) {
+        $stringname = $tmp[0];
+        // Eg. nemsserver=127.0.0.1 in nems-tools.conf will give $nemsserver here.
+        $$stringname = trim($tmp[1]);
+      }
+    }
+  } else {
+    die('Could not load nems-tools.conf.' . PHP_EOL);
+  }
+
+  if (!isset($nemsserver)) die('nemsserver missing from nems-tools.conf' . PHP_EOL);
+
+// Setup GPIO
+  echo '[' . date('Y-m-d g:i:sa') . '] Initializing warninglight... ';
+  $GPIO->pins = array('ok'=>24,'unknown'=>23,'warning'=>23,'critical'=>18,'siren'=>18);
+  if (file_exists('/usr/local/bin/gpio')) {
+    $hardware=1;
+  } else {
+    $hardware=0;
+  }
+  if ($platform >= 0 && $platform <= 9) {
+    // Raspberry Pi
+    if ($hardware == 1) {
+      foreach ($GPIO->pins as $status => $pin) {
+        shell_exec('/usr/local/bin/gpio -g mode ' . $pin . ' output');
+      }
+      // Clear light state (turn off all lights)
+      lightOn('none',5000000);
+
+      // Initialization animation
+      for ($q = 0; $q < 6; $q++) {
+        lightOn('ok',200000); lightOn('none',400000);
+      }
+      for ($i = 0 ; $i < 2; $i++) {
+        for ($k = 0 ; $k < 2; $k++) {
+          lightOn('ok'); lightOn('warning'); lightOn('critical'); lightOn('warning');
+        }
+      }
+      for ($i = 0; $i < 2; $i++) {
+        lightOn('all',400000); lightOn('none',800000);
+      }
+      for ($i = 0; $i < 15; $i++) {
+        lightOn('unknown',500); lightOn('none',500); lightOn('critical',500); lightOn('none',500);
+      }
+      for ($i = 0; $i < 15; $i++) {
+        lightOn('unknown',250); lightOn('none',250); lightOn('critical',250); lightOn('none',250); lightOn('ok',250); lightOn('none',250);
+      }
+      // Final light state is "unknown" - which will be replaced as soon as it is known
+      lightOn('unknown',1000);
+      echo 'Done.';
+    } else {
+      echo 'Cannot initialize local hardware. GPIO Extender enabled.';
+    }
+  } else {
+    echo 'Daemon loaded, but hardware is not compatible with this SBC.' . PHP_EOL;
+    echo 'Will act as server.';
+  }
+  echo PHP_EOL;
+
+echo '[' . date('Y-m-d g:i:sa') . '] Connecting to NEMS Linux to obtain current state.' . PHP_EOL;
+
+$currentstate = ''; // First run will never match the default state
+$apiresponse = 0; // 0 means API had no errors
+
+$definitions = new stdClass();
+  $definitions->{0} = 'OK';
+  $definitions->{1} = 'WARNING';
+  $definitions->{2} = 'CRITICAL';
+  $definitions->{3} = 'UNKNOWN';
+
+// Begin daemon loop
+while (1 == 1) {
+
+# Tell the watchdog to power off the NEMS Server if it hasn't received a heartbeat for 2 minutes
+# This activates and resets the i2C watchdog every iteration of the loop
+if ($platform >= 0 && $platform <= 9) {
+  if ($omzlopresent == 1) {
+    shell_exec('/root/nems/nems-tools/omzlo-warninglights watchdog 120');
+  }
+}
+
+$issues = array(); // reset at each iteration
+$states = query('hosts?Columns=name,state,services_with_fullstate');
+if (is_object($states) && count((array)$states) > 0) {
+  foreach ($states->content as $key=>$host) {
+    if (isset($host->services_with_fullstate)) {
+      foreach ($host->services_with_fullstate as $services) {
+        if (is_array($services) && isset($services[1])) {
+          $issues[$services[1]][] = array(
+            'service'=>$services[0],
+            'host'=>$host->name,
+            'error'=>$services[3]
+          );
+        }
+      }
+    }
+  }
+}
+
+// Only allow one state, and always default to the worst.
+// Eg., if critical and warning set, we'll go with critical.
+if (isset($issues[2])) {
+  setstate('critical');
+} elseif (isset($issues[1])) {
+  setstate('warning');
+} elseif (isset($issues[3])) {
+  setstate('unknown');
+} elseif (isset($issues[0])) {
+  setstate('ok');
+} else {
+  $apiresponse++;
+  if ($apiresponse == 5) {
+    echo '[' . date('Y-m-d g:i:sa') . '] nems-api is not responding or Nagios offline.' . PHP_EOL;
+    lightOn('critical');
+  }
+  if ($apiresponse == 10) { // set light to orange and leave it there.
+    echo '[' . date('Y-m-d g:i:sa') . '] nems-api is still not responding: I\'ll stop notifying.' . PHP_EOL;
+    lightOn('none');
+  }
+}
+  sleep(30); // refresh the data every 30 seconds
+} // end of daemon loop
+
+
+
+// Functions
+
+  function query($query) {
+    global $nemsserver;
+    $url = 'http://' . $nemsserver . '/nems-api/' . $query;
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    if ($response = curl_exec($ch)) {
+      $result = json_decode($response);
+    } else {
+      $result = json_encode(array('error'=>'invalid query or server not responding'));
+    }
+    curl_close($ch);
+    return ($result);
+  }
+
+function setstate($state) {
+  global $issues,$currentstate,$currentissues,$v,$apiresponse,$platform;
+  $apiresponse = 0; // 0 means the API had no problems.
+  $previousstate = $currentstate;
+  $currentstate = $state;
+  $previousissues = $currentissues;
+  $currentissues = '';
+
+  // only update status if state has changed
+    switch ($state) {
+
+      case 'ok': // Green light.
+	omzlo('green3');
+        if ($currentstate != $previousstate) $currentissueshead = 'NEMS State: OK.' . PHP_EOL;
+        $fieldsarray[] = array(
+          'name' => 'Everything is okay',
+          'value' => 'No known issues',
+          'inline' => false
+        );
+      break;
+
+      case 'unknown': // Turn on orange light.
+        omzlo('green3 orange1');
+        if ($currentstate != $previousstate) {
+          $currentissueshead = 'NEMS State: UNKNOWN.' . PHP_EOL;
+        } else {
+          $currentissueshead = 'Updated:' . PHP_EOL;
+        }
+        if (isset($issues[3])) foreach ($issues[3] as $issue) {
+          $currentissues .= '  - Service "' . $issue['service'] . '" on ' . $issue['host'] . ':' . PHP_EOL . '    ' . $issue['error'] . PHP_EOL;
+          $fieldsarray[] = array(
+            'name' => $issue['service'] . ' on ' . $issue['host'],
+            'value' => $issue['error'],
+            'inline' => true
+          );
+        }
+      break;
+
+      case 'warning': // Turn on orange, flash or pulse red.
+//        omzlo('orange2 buzzer2');
+//        sleep(2);
+        omzlo('orange3'); // Would like to use orange2 but currently a bug in that code
+        if ($currentstate != $previousstate) {
+          $currentissueshead = 'NEMS State: WARNING.' . PHP_EOL;
+        } else {
+          $currentissueshead = 'Updated:' . PHP_EOL;
+        }
+        if (isset($issues[1])) foreach ($issues[1] as $issue) {
+          $currentissues .= '  - Service "' . $issue['service'] . '" on ' . $issue['host'] . ':' . PHP_EOL . '    ' . $issue['error'] . PHP_EOL;
+          $fieldsarray[] = array(
+            'name' => $issue['service'] . ' on ' . $issue['host'],
+            'value' => $issue['error'],
+            'inline' => true
+          );
+        }
+        if (isset($issues[3])) {
+          $currentissues .= 'Other issues:' . PHP_EOL;
+          foreach ($issues[3] as $issue) {
+            $currentissues .= '  - Service "' . $issue['service'] . '" on ' . $issue['host'] . ':' . PHP_EOL . '    ' . $issue['error'] . PHP_EOL;
+            $fieldsarray[] = array(
+              'name' => $issue['service'] . ' on ' . $issue['host'],
+              'value' => $issue['error'],
+              'inline' => true
+            );
+          }
+        }
+      break;
+
+      case 'critical': // Red solid light, siren for 3 seconds every 15 minutes.
+//        omzlo('red2 buzzer3');
+//        sleep(3);
+        omzlo('red3');
+        if ($currentstate != $previousstate) {
+          $currentissueshead = 'NEMS State: CRITICAL.' . PHP_EOL;
+        } else {
+          $currentissueshead = 'Updated:' . PHP_EOL;
+        }
+        if (isset($issues[2])) foreach ($issues[2] as $issue) {
+          $currentissues .= '  - Service "' . $issue['service'] . '" on ' . $issue['host'] . ':' . PHP_EOL . '    ' . $issue['error'] . PHP_EOL;
+          $fieldsarray[] = array(
+            'name' => $issue['service'] . ' on ' . $issue['host'],
+            'value' => $issue['error'],
+            'inline' => true
+          );
+        }
+        if (isset($issues[1]) || isset($issues[3])) {
+          $currentissues .= 'Other issues:' . PHP_EOL;
+          if (isset($issues[1])) { // warnings
+            foreach ($issues[1] as $issue) {
+              $currentissues .= '  - Service "' . $issue['service'] . '" on ' . $issue['host'] . ':' . PHP_EOL . '    ' . $issue['error'] . PHP_EOL;
+              $fieldsarray[] = array(
+                'name' => $issue['service'] . ' on ' . $issue['host'],
+                'value' => $issue['error'],
+                'inline' => true
+              );
+            }
+          }      
+          if (isset($issues[3])) { // unknown
+            foreach ($issues[3] as $issue) {
+              $currentissues .= '  - Service "' . $issue['service'] . '" on ' . $issue['host'] . ':' . PHP_EOL . '    ' . $issue['error'] . PHP_EOL;
+              $fieldsarray[] = array(
+                'name' => $issue['service'] . ' on ' . $issue['host'],
+                'value' => $issue['error'],
+                'inline' => true
+              );
+            }
+          }      
+        }
+      break;
+
+    }
+    if ($currentstate != $previousstate || $currentissues != $previousissues) {
+      echo '[' . date('Y-m-d g:i:sa') . '] ' . $currentissueshead . $currentissues;
+      // clobber the currentstate file
+      file_put_contents('/var/log/nems/nems-tools/currentstate','[' . date('Y-m-d g:i:sa') . '] ' . $currentissueshead . $currentissues);
+      include('/root/nems/nems-tools/webhook');
+    }
+  
+  // Activate appropriate light
+    lightOn($state);
+    omzlo('green1');
+
+}
+
+function lightOn($thisstatus,$delay=100000) {
+  global $GPIO,$hardware,$iteration;
+  $chosenpin = '';
+  foreach ($GPIO->pins as $status=>$pin) {
+    if ($status == $thisstatus || $thisstatus == 'all') {
+      if ($hardware != 0) shell_exec('/usr/local/bin/gpio -g write ' . $pin . ' 1');
+      $chosenpin = $pin;
+      $GPIO->state[$pin] = 1;
+    } elseif ($pin != $chosenpin) {
+      if ($hardware != 0) shell_exec('/usr/local/bin/gpio -g write ' . $pin . ' 0');
+      $GPIO->state[$pin] = 0;
+    }
+  }
+  // Only pass specific data (Keep the transmission small)
+  $pass = new stdClass();
+  $pass->nems = true;
+  $pass->iteration = $iteration++;
+  $pass->state = $GPIO->state;
+  $pass->omzlo = $GPIO->omzlo;
+  file_put_contents('/var/log/nems/nems-tools/gpio-extender.json',json_encode($pass));
+  usleep($delay);
+}
+
+// If an Omzlo Warninglights pHAT is available, trigger the appropriate lights
+function omzlo($alerts) {
+  global $GPIO, $platform, $omzlopresent;
+  $GPIO->omzlo = $alerts; // We'll still set the omzlo alerts since we might be passing it via GPIO Extender
+  if ($platform >= 0 && $platform <= 9) { // just don't run it if not a Pi host
+    if ($omzlopresent == 3) {
+      echo '[' . date('Y-m-d g:i:sa') . '] Checking to see if an Omzlo Warning Light pHAT is present on this NEMS Server... ';
+      $test = shell_exec('/root/nems/nems-tools/omzlo-warninglights status 2>&1');
+      if (stristr($test,'failed')) {
+        $omzlopresent = 0;
+        echo 'No.' . PHP_EOL;
+      } else {
+        $omzlopresent = 1;
+        echo 'Yes.' . PHP_EOL;
+      }
+    }
+    if ($omzlopresent == 1) {
+      shell_exec('/root/nems/nems-tools/omzlo-warninglights alerts ' . $alerts);
+    }
+  }
+}
+
+unlink('/var/run/warninglight.pid');
+
+?>
