@@ -1,0 +1,21 @@
+#!/bin/bash
+#### NEMS Hero
+###  See https://docs.nemslinux.com/en/latest/nems-tools/nems-hero.html
+
+# User has forcibly disabled NEMS Hero
+if [[ -e /boot/no-hero ]]; then
+  exit
+fi
+
+# The public key for NEMS Hero
+# Created August 18, 2022
+pubkey="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCuf2BXJHDw7VNqZ2KbY5zaYpIx5+kChURZogQx4Qdwr9Sx5K6KCkQ0J3K1OLFhK7eqvv79VtFP5f4YE05kOcGvqoDa1UbaCTxQJva+8sNlMGdXlDgNuyWDw0SywcffrBF2BkOOr2Uz+CMuyxz3LTg4t+ox4KpBw6mOWYo7R803Ib4atgZaSFcBi7XQBP7gxryXEi8cEr+kQs5e2ALJ5Fmc/POBUJzwVDLzuYkD9JLiM4sa77oGBTZLERSuIDT+FBUxlf/3+Wjnvgb2fRJRLI4ji46pZIFpcDVAVi2hFFkf7rLTc7Ns1Pohhys9bu+dbRDU1tbuBlOv0/J8NaBv3t0ev4cnoKR/tk4t6fIUiSbREX9ARk7KoHB4X6smy4/Aqy4HVi2UrPzka6Rv3ivB332l8QdFdGVnoGvW71VIZAWMA1wRC7hwZ+v35VU8ZRih8eFCnpUz+sEc7CDiiPitr+esAMN4ug3Rqiq1hEOCLhtzeBRTTJ71r2PzLdRM7ZesdQE= root@localhost"
+
+upSeconds="$(cat /proc/uptime | grep -o '^[0-9]\+')"
+upMins=$((${upSeconds} / 60))
+
+# Only allow NEMS Hero for up to 15 minutes following a reboot
+if [ "${upMins}" -lt "15" ]
+then
+  echo $pubkey
+fi

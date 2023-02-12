@@ -29,10 +29,12 @@ file_put_contents('/var/run/warninglight.pid',$pid);
 $GPIO = new stdClass();
 
 omzlo('green3 orange3 red3');
+khadas('white pulse');
 sleep(3);
 //omzlo('buzzer3');
 //sleep(1);
 omzlo('green2 orange1 red1');
+khadas('white on');
 
 // Sleep to allow the GPIO Extender to initialize
   sleep(30);
@@ -125,7 +127,7 @@ while (1 == 1) {
 # This activates and resets the i2C watchdog every iteration of the loop
 if ($platform >= 0 && $platform <= 9) {
   if ($omzlopresent == 1) {
-    shell_exec('/root/nems/nems-tools/omzlo-warninglights watchdog 120');
+    shell_exec('/root/nems/nems-tools/warninglight-omzlo watchdog 120');
   }
 }
 
@@ -204,6 +206,7 @@ function setstate($state) {
 
       case 'ok': // Green light.
 	omzlo('green3');
+        khadas('white on');
         if ($currentstate != $previousstate) $currentissueshead = 'NEMS State: OK.' . PHP_EOL;
         $fieldsarray[] = array(
           'name' => 'Everything is okay',
@@ -214,6 +217,7 @@ function setstate($state) {
 
       case 'unknown': // Turn on orange light.
         omzlo('green3 orange1');
+        khadas('white pulse');
         if ($currentstate != $previousstate) {
           $currentissueshead = 'NEMS State: UNKNOWN.' . PHP_EOL;
         } else {
@@ -233,6 +237,8 @@ function setstate($state) {
 //        omzlo('orange2 buzzer2');
 //        sleep(2);
         omzlo('orange3'); // Would like to use orange2 but currently a bug in that code
+        khadas('white on');
+        khadas('red pulse');
         if ($currentstate != $previousstate) {
           $currentissueshead = 'NEMS State: WARNING.' . PHP_EOL;
         } else {
@@ -263,6 +269,8 @@ function setstate($state) {
 //        omzlo('red2 buzzer3');
 //        sleep(3);
         omzlo('red3');
+        khadas('white off');
+        khadas('red on');
         if ($currentstate != $previousstate) {
           $currentissueshead = 'NEMS State: CRITICAL.' . PHP_EOL;
         } else {
@@ -345,7 +353,7 @@ function omzlo($alerts) {
   if ($platform >= 0 && $platform <= 9) { // just don't run it if not a Pi host
     if ($omzlopresent == 3) {
       echo '[' . date('Y-m-d g:i:sa') . '] Checking to see if an Omzlo Warning Light pHAT is present on this NEMS Server... ';
-      $test = shell_exec('/root/nems/nems-tools/omzlo-warninglights status 2>&1');
+      $test = shell_exec('/root/nems/nems-tools/warninglight-omzlo status 2>&1');
       if (stristr($test,'failed')) {
         $omzlopresent = 0;
         echo 'No.' . PHP_EOL;
@@ -355,8 +363,16 @@ function omzlo($alerts) {
       }
     }
     if ($omzlopresent == 1) {
-      shell_exec('/root/nems/nems-tools/omzlo-warninglights alerts ' . $alerts);
+      shell_exec('/root/nems/nems-tools/warninglight-omzlo alerts ' . $alerts);
     }
+  }
+}
+
+// If this is a Khadas board, we'll use the built-in LEDs as WarningLight indicators
+function khadas($alerts) {
+  global $platform;
+  if ($platform == 120) {
+    shell_exec('/root/nems/nems-tools/warninglight-khadas alerts ' . $alerts);
   }
 }
 

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Control the built-in LED on Khadas boards
+
+# Obtain the platform ID
+platform=$(/usr/local/bin/nems-info platform)
+
+# Check if a PID exists. If yes, check if it is running and abort if yes.
+if [[ -e /var/run/nems-warninglight-khadas.pid ]]; then
+  running=$(cat /var/run/nems-warninglight-khadas.pid)
+  if ps -p $running > /dev/null
+    then
+      echo "Already running"
+      exit
+    fi
+fi
+
+# Store the PID (so you can more easily kill the process)
+echo $$ > /var/run/nems-warninglight-khadas.pid
+
+if (( $platform == "120" )); then
+
+  # find /lib/modules/$(uname -r) -type f -name '*.ko' | grep -iE leds
+  if [[ $2 == "white" ]]; then
+    led='vim3:white:sys'
+  elif [[ $2 == "red" ]]; then
+    led='vim3:red'
+  fi
+
+  if [[ $1 == "alerts" ]]; then
+    if [[ $3 == "on" ]]; then
+      echo default-on | tee "/sys/class/leds/${led}/trigger"
+    elif [[ $3 == "pulse" ]]; then
+      echo heartbeat | tee "/sys/class/leds/${led}/trigger"
+    elif [[ $3 == "off" ]]; then
+      echo none | tee "/sys/class/leds/${led}/trigger"
+    fi
+  fi
+
+fi
+
