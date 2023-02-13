@@ -29,6 +29,7 @@ file_put_contents('/var/run/warninglight.pid',$pid);
 $GPIO = new stdClass();
 
 omzlo('green3 orange3 red3');
+khadas('red off');
 khadas('white pulse');
 sleep(3);
 //omzlo('buzzer3');
@@ -206,6 +207,7 @@ function setstate($state) {
 
       case 'ok': // Green light.
 	omzlo('green3');
+        khadas('red off');
         khadas('white on');
         if ($currentstate != $previousstate) $currentissueshead = 'NEMS State: OK.' . PHP_EOL;
         $fieldsarray[] = array(
@@ -217,6 +219,7 @@ function setstate($state) {
 
       case 'unknown': // Turn on orange light.
         omzlo('green3 orange1');
+        khadas('red off');
         khadas('white pulse');
         if ($currentstate != $previousstate) {
           $currentissueshead = 'NEMS State: UNKNOWN.' . PHP_EOL;
