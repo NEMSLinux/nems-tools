@@ -4,7 +4,7 @@ Priority: required
 Section: main
 Maintainer: NEMS Linux <nems@category5.tv>
 Architecture: all
-Version: 1.6.013
+Version: 1.6.014
 Provides: nems-tools
 Description: NEMS Tools
 Depends: nmap, jq
