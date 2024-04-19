@@ -15,19 +15,23 @@ $stateup = strtoupper($state);
 switch ($stateup) {
   case 'OK':
     $color='green';
+    $colorHex='#33ff33';
     break;
 
   case 'WARNING':
   case 'UNKNOWN':
     $color='yellow';
+    $colorHex='#ffff33';
     break;
 
   case 'CRITICAL':
     $color='red';
+    $colorHex='ff3333';
     break;
 
   default:
     $color='yellow';
+    $colorHex='#ffff33';
 }
 
 if (!isset($fieldsarray)) {
@@ -70,20 +74,72 @@ foreach ($fieldsarray as $input) {
 $hookObject = new stdClass();
 
 if (strstr($webhook,'office.com')) { // MS Office 365 / Teams: https://docs.microsoft.com/en-us/outlook/actionable-messages/send-via-connectors
-  $nemsstate = trim('NEMS ' . $currentissueshead);
-  $hookObject->{@schema} = 'https://adaptivecards.io/schemas/adaptive-card.json';
+  $nemsstate = trim($currentissueshead);
+/*
+  $hookObject->type = 'message';
+
+  $hookObject->attachments = new stdClass();
+  $hookObject->attachments->contentType = 'application/vnd.microsoft.card.adaptive';
+  $hookObject->attachments->contentUrl = null;
+
+  $hookObject->content = new stdClass();
+  $hookObject->content->{'$schema'} = 'http://adaptivecards.io/schemas/adaptive-card.json';
+  $hookObject->content->type = 'AdaptiveCard';
+  $hookObject->content->version = '1.2';
+
+  $hookObject->content->body = new stdClass();
+  $hookObject->content->body->type = 'TextBlock';
+  $hookObject->content->body->text = "**$nemsstate**\n\n" . $formattedIssues . "\n\n**Reporting Server:** $alias\n\n**Timestamp:** " . date('c');
+
+*/
+
+/*
+  $hookObject->{'$schema'} = 'https://adaptivecards.io/schemas/adaptive-card.json';
   $hookObject->type = 'AdaptiveCard';
   $hookObject->version = '1.0';
   $hookObject->username = 'NEMS ' . strtoupper($state);
   $hookObject->image = $light_cdn . $color . '.png';
 
-  $formattedIssues = '';
-  foreach(preg_split("/((\r?\n)|(\r\n?))/", $currentissues) as $line){
-    $formattedIssues .= trim($line) . "\r\n";
-  } 
-
   // For now, have to do plain text since Adaptive Cards don't work in MS Teams [yet] - see https://stackoverflow.com/questions/50753072/microsoft-teams-webhook-generating-400-for-adaptive-card#comment93907448_50753413
   $hookObject->text = "**$nemsstate**\n\n" . $formattedIssues . "\n\n**Reporting Server:** $alias\n\n**Timestamp:** " . date('c') . "\n\nPowered by NEMS Linux $nemsver";
+*/
+$color="orange";
+  $formattedText = '';
+  foreach(preg_split("/((\r?\n)|(\r\n?))/", $currentissues) as $line){
+    $formattedIssues[] = array('name'=>trim($line));
+    $formattedText = $formattedText . '<br /><br />' . trim($line);
+  }
+
+  $hookObject = [
+    "@type" => "MessageCard",
+    "@context" => "http://schema.org/extensions",
+    "themeColor" => $colorHex,
+    "summary" => $nemsstate,
+    "sections" => [
+        [
+            "activitySubtitle" => "Reported by $alias | NEMS Linux $nemsver",
+            "markdown" => true,
+        ]
+    ],
+    "text" => '<font color="#' . $colorHex . '">' . $nemsstate . '</font>' . $formattedText . '<hr />'
+
+];
+
+/*
+    "potentialAction" => [
+        [
+            "@type" => "ActionCard",
+            "name" => "Add a comment",
+            "inputs" => [
+                ["@type" => "TextInput", "id" => "comment", "isMultiline" => false, "title" => "Add a comment here for this task"]
+            ],
+            "actions" => [
+                ["@type" => "HttpPOST", "name" => "Add comment", "target" => "https://learn.microsoft.com/outlook/actionable-messages"]
+            ]
+        ],
+        // Additional action cards...
+    ]
+*/
 
 } elseif (strstr($webhook,'slack.com')) { // Slack
 
