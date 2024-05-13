@@ -150,7 +150,7 @@ $color="orange";
 
 } elseif ( strstr($webhook,'discord.com') || strstr($webhook,'discordapp.com') )  { // Discord
   $hookObject->content = strtoupper($state);
-  $hookObject->username = 'NEMS ' . strtoupper($state);
+  $hookObject->username = mb_strimwidth('NEMS ' . strtoupper($f_state), 0,77, '...');
   $hookObject->avatar_url = $light_cdn . $color . '.png';
   $hookObject->tts = false;
 
