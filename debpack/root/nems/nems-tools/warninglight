@@ -8,7 +8,7 @@ $user=trim(shell_exec('whoami'));
 if ($user != 'root') die('Access denied: Must be root.' . PHP_EOL);
 if (file_exists('/usr/local/bin/nems-info')) {
   $platform = shell_exec('/usr/local/bin/nems-info platform');
-  $nemsver = trim(shell_exec('/usr/local/bin/nems-info nemsverbranch'));
+  $nemsbranch = trim(shell_exec('/usr/local/bin/nems-info nemsver branch'));
 } else {
   $platform = 0;
 }
@@ -319,7 +319,7 @@ function setstate($state) {
       // clobber the currentstate file
       file_put_contents('/var/log/nems/nems-tools/currentstate','[' . date('Y-m-d g:i:sa') . '] ' . $currentissueshead . $currentissues);
       // Deprecated in 1.7. Use notify-by-webhook instead.
-      if ($nemsver < 1.7) {
+      if ($nemsbranch < 1.7) {
         include('/root/nems/nems-tools/webhook');
       }
     }
